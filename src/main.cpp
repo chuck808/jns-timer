@@ -142,6 +142,9 @@ enum LedState {
  *===========================================*/
 
 CRGB leds[RGB_LED_COUNT];
+#if HAS_EXT_LED
+CRGB extLeds[EXT_LED_COUNT];
+#endif
 
 /*===========================================
  * GLOBAL VARIABLES
@@ -270,6 +273,9 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
 void setLED(CRGB colour, uint8_t brightness) {
     FastLED.setBrightness(brightness);
     leds[0] = colour;
+#if HAS_EXT_LED
+    for (uint8_t i = 0; i < EXT_LED_COUNT; i++) extLeds[i] = colour;
+#endif
     FastLED.show();
 }
 
@@ -939,9 +945,7 @@ void updatePairingProgress() {
         }
         // Brightness ramps from 20 → 200 over 3s as a visual cue
         uint8_t brightness = (uint8_t)map(min(pressDuration, 3000UL), 0, 3000, 20, 200);
-        FastLED.setBrightness(brightness);
-        leds[0] = CRGB::Cyan;
-        FastLED.show();
+        setLED(CRGB::Cyan, brightness);
     }
 }
 
@@ -1001,6 +1005,9 @@ void setup() {
 
     // FastLED
     FastLED.addLeds<SK6812, RGB_LED_PIN, GRB>(leds, RGB_LED_COUNT);
+#if HAS_EXT_LED
+    FastLED.addLeds<SK6812, EXT_LED_PIN, GRB>(extLeds, EXT_LED_COUNT);
+#endif
     requestLedState(LED_BOOT);
     updateLED();
 
