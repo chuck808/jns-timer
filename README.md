@@ -214,9 +214,11 @@ pio run -t upload && pio device monitor
 - Verify both devices are on same WiFi channel
 - Re-pair if persistent
 
-### Battery warnings disabled
-- Currently disabled for testing (see `main.cpp` lines 1019-1038)
-- Uncomment battery init code to enable monitoring
+### Battery monitoring enabled
+- Full battery monitoring and warnings active
+- Orange LED indicates low battery state
+- Critical battery prevents boot until charged
+- Battery percentage and voltage displayed in debug output (`D` command)
 
 ## 📝 License
 
