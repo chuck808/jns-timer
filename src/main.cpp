@@ -51,6 +51,7 @@
 #include "ButtonManager.h"
 #include "BatteryManager.h"
 #include "SensorManager.h"
+#include "PowerManager.h"
 //#include "version.h"
 
 /*===========================================
@@ -772,13 +773,12 @@ void handleButtonEvent(ButtonEvent event) {
     DEBUG_PRINTF("Button event: %d  mode: %d  sensor: %s\n",
                  event, deviceMode, SensorManager::getStateString());
 
-    // Ultra-long press (6s) — no hardware power latch on this board,
-    // so we just restart cleanly. User can power off via hardware switch.
+    // Ultra-long press (6s) — soft power off
     if (event == BTN_ULTRA_LONG_PRESS) {
-        DEBUG_PRINTLN("Ultra-long press — restarting");
+        DEBUG_PRINTLN("Ultra-long press — powering off");
         setLED(CRGB::Red, 80);
         delay(500);
-        ESP.restart();
+        PowerManager::shutdown();   // soft off (~13uA); wakes on the ON button
         return;
     }
 
@@ -1004,6 +1004,12 @@ void setup() {
     requestLedState(LED_BOOT);
     updateLED();
 
+    // Power: PM1 rail + wake must come up BEFORE the sensor. The IR emitter
+    // runs off SYS_5V (EXT_5V_OUT), which is off until PowerManager enables it.
+    if (!PowerManager::begin()) {
+        DEBUG_PRINTLN("WARNING: PM1 not found — 5V rail OFF (emitter dead unless J1 externally powered)");
+    }
+
     // Boot settle — blue LED
     DEBUG_PRINTLN("Settling...");
     delay(BOOT_SETTLE_MS);
@@ -1088,11 +1094,10 @@ void loop() {
             Serial.printf("Sensor:       %s\n",  SensorManager::getStateString());
             Serial.printf("Beam:         %s\n",  SensorManager::isBeamIntact() ? "INTACT" : "BROKEN");
             Serial.printf("LED state:    %d\n",  currentLedState);
-            Serial.printf("Battery:      %d%% (%dmV) VIN=%dmV %s\n",
-                BatteryManager::getPercentage(),
-                BatteryManager::getVoltage(),
-                BatteryManager::getInputVoltage(),
-                BatteryManager::getChargingString());
+            Serial.printf("Battery:      %dmV  VIN=%dmV  %s\n",
+                PowerManager::batteryMillivolts(),
+                PowerManager::inputMillivolts(),
+                PowerManager::onExternalPower() ? "EXT-PWR" : "BATTERY");
             Serial.printf("Session runs: %d\n",  sessionRuns);
             Serial.printf("Last break:   %luus\n", SensorManager::getLastBreakDurationUs());
             Serial.println("=============\n");
