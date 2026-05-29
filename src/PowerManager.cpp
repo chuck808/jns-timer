@@ -12,6 +12,9 @@
 
 #include <Wire.h>
 #include <M5PM1.h>
+#include <esp_log.h>
+
+static const char* TAG = "PowerManager";
 
 /*===========================================
  * PM1 instance + GPIO role map
@@ -39,12 +42,12 @@ bool PowerManager::begin() {
                                 BATTERY_I2C_SDA, BATTERY_I2C_SCL,
                                 M5PM1_I2C_FREQ_100K);
     if (err != M5PM1_OK) {
-        Serial.printf("PowerManager: PM1 init FAILED (%d) — 5V rail OFF, emitter will not work\n", err);
+        ESP_LOGE(TAG, "PM1 init FAILED (%d) — 5V rail OFF, emitter will not work", err);
         ready = false;
         return false;
     }
     ready = true;
-    Serial.println("PowerManager: PM1 init OK");
+    ESP_LOGI(TAG, "PM1 init OK");
 
     // --- Charging ---------------------------------------------------------
     pm1.setChargeEnable(true);
@@ -52,11 +55,11 @@ bool PowerManager::begin() {
     pm1.gpioSetMode(PM1_CHG_PROG_GPIO, M5PM1_GPIO_MODE_OUTPUT);
     pm1.gpioSetPull(PM1_CHG_PROG_GPIO, M5PM1_GPIO_PULL_NONE);
     pm1.gpioSetOutput(PM1_CHG_PROG_GPIO, false);            // low = 650mA
-    Serial.println("PowerManager: charge current 650mA");
+    ESP_LOGI(TAG, "charge current 650mA");
 #else
     pm1.gpioSetMode(PM1_CHG_PROG_GPIO, M5PM1_GPIO_MODE_INPUT);
     pm1.gpioSetPull(PM1_CHG_PROG_GPIO, M5PM1_GPIO_PULL_NONE); // float = 200mA
-    Serial.println("PowerManager: charge current 200mA");
+    ESP_LOGI(TAG, "charge current 200mA");
 #endif
 
     // --- EXT_5V_OUT on (powers IR emitter J1 + external LED J5) -----------
@@ -77,7 +80,7 @@ bool PowerManager::begin() {
     pm1.gpioSetWakeEnable(PM1_WAKE_GPIO, true);
     pm1.gpioSetWakeEdge(PM1_WAKE_GPIO, M5PM1_GPIO_WAKE_FALLING);
 
-    Serial.println("PowerManager: 5V rail ON, charging enabled, wake armed on PY_G4");
+    ESP_LOGI(TAG, "5V rail ON, charging enabled, wake armed on PY_G4");
     return true;
 }
 
@@ -102,7 +105,7 @@ void PowerManager::enable5V(bool on) {
  *===========================================*/
 
 void PowerManager::shutdown() {
-    Serial.println("PowerManager: shutting down — press the ON button to wake");
+    ESP_LOGI(TAG, "shutting down — press the ON button to wake");
     delay(50);
     if (ready) {
         enable5V(false);     // cut emitter / J5 supply first

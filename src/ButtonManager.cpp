@@ -10,6 +10,9 @@
  */
 
 #include "ButtonManager.h"
+#include <esp_log.h>
+
+static const char* TAG = "ButtonManager";
 
 // Static member initialisation
 uint8_t ButtonManager::buttonPin  = BTN_INPUT;  // GPIO0 — Stamp S3 onboard button
@@ -51,7 +54,7 @@ void ButtonManager::init(uint8_t pin, bool activeLow) {
     lastState    = currentState;
     stableState  = currentState;
 
-    Serial.printf("ButtonManager: Initialised on GPIO%d (active %s)\n",
+    ESP_LOGI(TAG, "Initialised on GPIO%d (active %s)",
                   buttonPin, activeLow ? "LOW" : "HIGH");
 }
 
@@ -125,7 +128,7 @@ void ButtonManager::processButtonPress() {
         lastClickTime       = now;
     }
 
-    Serial.println("ButtonManager: Pressed");
+    ESP_LOGI(TAG, "Pressed");
 }
 
 void ButtonManager::processButtonRelease() {
@@ -145,7 +148,7 @@ void ButtonManager::processButtonRelease() {
     }
     // Single click resolved in update() after double-click window
 
-    Serial.printf("ButtonManager: Released (held %lums)\n", pressDuration);
+    ESP_LOGI(TAG, "Released (held %lums)", pressDuration);
 }
 
 /*===========================================
@@ -169,7 +172,7 @@ void ButtonManager::triggerEvent(ButtonEvent event) {
         case BTN_ULTRA_LONG_RELEASE: name = "ULTRA_LONG_RELEASE"; break;
         default:                     name = "NONE";               break;
     }
-    Serial.printf("ButtonManager: %s\n", name);
+    ESP_LOGI(TAG, "%s", name);
 
     if (eventCallback) eventCallback(event);
 }
@@ -180,7 +183,7 @@ void ButtonManager::triggerEvent(ButtonEvent event) {
 
 void ButtonManager::setCallback(ButtonCallback callback) {
     eventCallback = callback;
-    Serial.println("ButtonManager: Callback registered");
+    ESP_LOGI(TAG, "Callback registered");
 }
 
 bool          ButtonManager::isPressed()       { return stableState; }
@@ -193,6 +196,6 @@ void ButtonManager::setDoubleClickWindow(uint32_t ms)  { doubleClickWindow  = ms
 void ButtonManager::setLongPressTime(uint32_t ms)      { longPressTime      = ms; }
 void ButtonManager::setUltraLongPressTime(uint32_t ms) { ultraLongPressTime = ms; }
 
-void ButtonManager::enable()    { enabled = true;  Serial.println("ButtonManager: Enabled");  }
-void ButtonManager::disable()   { enabled = false; Serial.println("ButtonManager: Disabled"); }
+void ButtonManager::enable()    { enabled = true;  ESP_LOGI(TAG, "Enabled");  }
+void ButtonManager::disable()   { enabled = false; ESP_LOGI(TAG, "Disabled"); }
 bool ButtonManager::isEnabled() { return enabled; }

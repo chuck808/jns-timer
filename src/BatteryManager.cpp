@@ -5,6 +5,9 @@
 
 #include "BatteryManager.h"
 #include "PowerManager.h"
+#include <esp_log.h>
+
+static const char* TAG = "BatteryManager";
 
 bool          BatteryManager::ready        = false;
 uint16_t      BatteryManager::lastMv       = 0;
@@ -61,11 +64,11 @@ BatteryState BatteryManager::classify(uint16_t mv) {
 bool BatteryManager::init() {
     ready = PowerManager::isReady();   // PowerManager owns the bus + PM1
     if (!ready) {
-        Serial.println("BatteryManager: PM1 not ready (PowerManager not initialised)");
+        ESP_LOGI(TAG, "PM1 not ready (PowerManager not initialised)");
         return false;
     }
     update();
-    Serial.printf("BatteryManager: %u%% (%umV)  VIN=%umV  %s\n",
+    ESP_LOGI(TAG, "%u%% (%umV)  VIN=%umV  %s",
                   lastPct, lastMv, lastVin, getChargingString());
     return true;
 }

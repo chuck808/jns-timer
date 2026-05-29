@@ -19,6 +19,9 @@
  */
 
 #include "SensorManager.h"
+#include <esp_log.h>
+
+static const char* TAG = "SensorManager";
 
 /*===========================================
  * STATIC MEMBER INITIALISATION
@@ -77,7 +80,7 @@ void SensorManager::init(uint8_t rxPin) {
     ledcSetup(0, IR_CARRIER_FREQ_HZ, IR_CARRIER_RES_BITS);
     ledcAttachPin(IR_EMITTER_PIN, 0);
     ledcWrite(0, IR_CARRIER_DUTY);
-    Serial.printf("SensorManager: IR emitter started on GPIO%d @ %dHz\n",
+    ESP_LOGI(TAG, "IR emitter started on GPIO%d @ %dHz",
                   IR_EMITTER_PIN, IR_CARRIER_FREQ_HZ);
 
     // ── Configure receiver pin ────────────────────────────────────────────
@@ -87,8 +90,8 @@ void SensorManager::init(uint8_t rxPin) {
     // ── Attach interrupt on both edges ────────────────────────────────────
     attachInterrupt(digitalPinToInterrupt(receiverPin), onBeamChange, CHANGE);
 
-    Serial.printf("SensorManager: Receiver on GPIO%d (active LOW = beam intact)\n", receiverPin);
-    Serial.printf("SensorManager: Timing windows — valid: %lu-%luµs  fault: >%luµs\n",
+    ESP_LOGI(TAG, "Receiver on GPIO%d (active LOW = beam intact)", receiverPin);
+    ESP_LOGI(TAG, "Timing windows — valid: %lu-%luµs  fault: >%luµs",
                   MIN_BREAK_US, MAX_BREAK_US, MAX_BREAK_US);
 
     transitionTo(SENSOR_ALIGNMENT);
@@ -149,7 +152,7 @@ void SensorManager::update() {
             if (stableFor >= ALIGNMENT_STABLE_MS) {
                 alignmentComplete = true;
                 alignmentProgress = 100;
-                Serial.println("SensorManager: Alignment confirmed — beam stable 2s");
+                ESP_LOGI(TAG, "Alignment confirmed — beam stable 2s");
                 transitionTo(SENSOR_STANDBY);
             }
             break;
@@ -171,7 +174,7 @@ void SensorManager::update() {
                 if (bStart > 0) {
                     unsigned long breakSoFar = micros() - bStart;
                     if (breakSoFar > MAX_BREAK_US) {
-                        Serial.printf("SensorManager: Fault — beam broken for %luµs (>%luµs limit)\n",
+                        ESP_LOGI(TAG, "Fault — beam broken for %luµs (>%luµs limit)",
                                       breakSoFar, MAX_BREAK_US);
                         faultPending = true;
                         transitionTo(SENSOR_FAULT);
@@ -197,11 +200,11 @@ void SensorManager::update() {
 
             if (faultClearStart == 0) {
                 faultClearStart = now;
-                Serial.println("SensorManager: Beam restored after fault — waiting for stable period");
+                ESP_LOGI(TAG, "Beam restored after fault — waiting for stable period");
             }
 
             if (now - faultClearStart >= FAULT_CLEAR_MS) {
-                Serial.println("SensorManager: Fault cleared — returning to alignment");
+                ESP_LOGI(TAG, "Fault cleared — returning to alignment");
                 faultClearStart      = 0;
                 alignmentStableStart = 0;
                 alignmentProgress    = 0;
@@ -227,15 +230,15 @@ void SensorManager::handleBreakEvent() {
         case SENSOR_ALIGNMENT:
             alignmentStableStart = 0;
             alignmentProgress    = 0;
-            Serial.println("SensorManager: Beam broken during alignment — restarting stable timer");
+            ESP_LOGI(TAG, "Beam broken during alignment — restarting stable timer");
             break;
 
         case SENSOR_STANDBY:
-            Serial.println("SensorManager: Beam broken in STANDBY (not armed)");
+            ESP_LOGI(TAG, "Beam broken in STANDBY (not armed)");
             break;
 
         case SENSOR_ACTIVE:
-            Serial.println("SensorManager: Beam broken — timing window started");
+            ESP_LOGI(TAG, "Beam broken — timing window started");
             break;
 
         default:
@@ -249,14 +252,14 @@ void SensorManager::handleRestoreEvent() {
     unsigned long bTs      = breakStartUs;
     interrupts();
 
-    Serial.printf("SensorManager: Beam restored — break duration: %luµs\n", duration);
+    ESP_LOGI(TAG, "Beam restored — break duration: %luµs", duration);
 
     switch (state) {
 
         case SENSOR_ACTIVE: {
             if (duration < MIN_BREAK_US) {
                 // Too short — noise or glitch
-                Serial.printf("SensorManager: Ignored — %luµs < %luµs minimum\n",
+                ESP_LOGI(TAG, "Ignored — %luµs < %luµs minimum",
                               duration, MIN_BREAK_US);
                 break;
             }
@@ -266,13 +269,13 @@ void SensorManager::handleRestoreEvent() {
                 lastBreakDurationUs = duration;
                 triggerTimestamp    = bTs;
                 triggerPending      = true;
-                Serial.printf("SensorManager: Valid crossing — %luµs\n", duration);
+                ESP_LOGI(TAG, "Valid crossing — %luµs", duration);
                 transitionTo(SENSOR_TRIGGERED);
                 break;
             }
 
             // duration > MAX_BREAK_US — fault (belt-and-braces, polling usually catches first)
-            Serial.printf("SensorManager: Fault on restore — %luµs > %luµs\n",
+            ESP_LOGI(TAG, "Fault on restore — %luµs > %luµs",
                           duration, MAX_BREAK_US);
             faultPending = true;
             transitionTo(SENSOR_FAULT);
@@ -295,7 +298,7 @@ void SensorManager::handleRestoreEvent() {
 void SensorManager::transitionTo(SensorState newState) {
     if (state == newState) return;
 
-    Serial.printf("SensorManager: %s → %s\n",
+    ESP_LOGI(TAG, "%s → %s",
                   getStateString(),
                   [](SensorState s) -> const char* {
                       switch(s) {
@@ -372,12 +375,12 @@ uint8_t SensorManager::getAlignmentProgress() {
 
 void SensorManager::arm() {
     if (state != SENSOR_STANDBY) {
-        Serial.printf("SensorManager: arm() ignored — not in STANDBY (state=%s)\n",
+        ESP_LOGI(TAG, "arm() ignored — not in STANDBY (state=%s)",
                       getStateString());
         return;
     }
     if (!isBeamIntact()) {
-        Serial.println("SensorManager: arm() refused — beam not intact");
+        ESP_LOGI(TAG, "arm() refused — beam not intact");
         return;
     }
 
@@ -388,12 +391,12 @@ void SensorManager::arm() {
     interrupts();
 
     transitionTo(SENSOR_ACTIVE);
-    Serial.println("SensorManager: Armed — watching for beam crossing");
+    ESP_LOGI(TAG, "Armed — watching for beam crossing");
 }
 
 void SensorManager::reset() {
     if (state != SENSOR_TRIGGERED && state != SENSOR_RESETTING) {
-        Serial.printf("SensorManager: reset() ignored — not in TRIGGERED/RESETTING (state=%s)\n",
+        ESP_LOGI(TAG, "reset() ignored — not in TRIGGERED/RESETTING (state=%s)",
                       getStateString());
         return;
     }
@@ -406,9 +409,9 @@ void SensorManager::reset() {
 
     if (isBeamIntact()) {
         transitionTo(SENSOR_ACTIVE);
-        Serial.println("SensorManager: Reset complete — re-armed");
+        ESP_LOGI(TAG, "Reset complete — re-armed");
     } else {
-        Serial.println("SensorManager: Reset — beam not intact, entering FAULT");
+        ESP_LOGI(TAG, "Reset — beam not intact, entering FAULT");
         faultPending = true;
         transitionTo(SENSOR_FAULT);
     }
@@ -423,11 +426,11 @@ void SensorManager::forceStandby() {
     triggerPending = false;
     faultPending   = false;
     transitionTo(SENSOR_STANDBY);
-    Serial.println("SensorManager: Forced to STANDBY");
+    ESP_LOGI(TAG, "Forced to STANDBY");
 }
 
 void SensorManager::retryInit() {
-    Serial.println("SensorManager: Retrying init...");
+    ESP_LOGI(TAG, "Retrying init...");
     alignmentComplete    = false;
     alignmentStableStart = 0;
     alignmentProgress    = 0;
@@ -446,7 +449,7 @@ void SensorManager::retryInit() {
 
     transitionTo(SENSOR_ALIGNMENT);
     alignmentStableStart = 0;
-    Serial.println("SensorManager: Retry — back in ALIGNMENT");
+    ESP_LOGI(TAG, "Retry — back in ALIGNMENT");
 }
 
 /*===========================================

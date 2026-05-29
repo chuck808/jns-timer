@@ -46,6 +46,7 @@
 #include <BLEServer.h>
 #include <BLE2902.h>
 #include <esp_task_wdt.h>
+#include <esp_log.h>
 
 #include "pin_config.h"
 #include "ButtonManager.h"
@@ -53,6 +54,8 @@
 #include "SensorManager.h"
 #include "PowerManager.h"
 //#include "version.h"
+
+static const char* TAG = "main";
 
 /*===========================================
  * CONFIGURATION
@@ -62,9 +65,9 @@
 
 #define DEBUG_MODE  1
 #if DEBUG_MODE
-    #define DEBUG_PRINT(x)          Serial.print(x)
-    #define DEBUG_PRINTLN(x)        Serial.println(x)
-    #define DEBUG_PRINTF(fmt, ...)  Serial.printf(fmt, ##__VA_ARGS__)
+    #define DEBUG_PRINT(x)          ESP_LOGI(TAG, "%s", x)
+    #define DEBUG_PRINTLN(x)        ESP_LOGI(TAG, "%s", x)
+    #define DEBUG_PRINTF(fmt, ...)  ESP_LOGI(TAG, fmt, ##__VA_ARGS__)
 #else
     #define DEBUG_PRINT(x)
     #define DEBUG_PRINTLN(x)
@@ -291,19 +294,18 @@ void updateLED() {
     unsigned long now = millis();
 
     // Battery warning overrides everything except boot
-    // TEMPORARILY DISABLED FOR TESTING
-    // if (currentLedState != LED_BOOT) {
-    //     BatteryState bs = BatteryManager::getState();
-    //     bool batteryWarn =
-    //         (bs == BAT_CRITICAL) ||
-    //         (bs == BAT_LOW);
+    if (currentLedState != LED_BOOT) {
+        BatteryState bs = BatteryManager::getState();
+        bool batteryWarn =
+            (bs == BAT_CRITICAL) ||
+            (bs == BAT_LOW);
 
-    //     if (batteryWarn) {
-    //         if (requestedLedState != LED_BATTERY_LOW) {
-    //             requestLedState(LED_BATTERY_LOW);
-    //         }
-    //     }
-    // }
+        if (batteryWarn) {
+            if (requestedLedState != LED_BATTERY_LOW) {
+                requestLedState(LED_BATTERY_LOW);
+            }
+        }
+    }
 
     currentLedState = requestedLedState;
 
@@ -681,16 +683,25 @@ bool connectToDevice() {
     BLEDevice::deinit();
     delay(100);
 
+    // Keep button manager updated during pairing process to prevent false ultra-long press
+    ButtonManager::update();
+    esp_task_wdt_reset();
+
     checkAndInitESPNow();
     delay(500);
+
+    // Keep button manager updated
+    ButtonManager::update();
+    esp_task_wdt_reset();
+
+    // Now switch to operational mode BEFORE initializing sensor
+    deviceMode = MODE_OPERATIONAL;
+    DEBUG_PRINTLN("Device OPERATIONAL after pairing — initializing sensor");
 
     setupSensor();
 
     // Sensor now in ALIGNMENT
     requestLedState(LED_ALIGNING);
-
-    deviceMode = MODE_OPERATIONAL;
-    DEBUG_PRINTLN("Device OPERATIONAL after pairing");
 
     return true;
 }
@@ -780,7 +791,18 @@ void handleButtonEvent(ButtonEvent event) {
                  event, deviceMode, SensorManager::getStateString());
 
     // Ultra-long press (6s) — soft power off
+    // BUT: suppress during discovery/pairing AND sensor initialization
+    // User is holding button from pairing → sensor init happens at ~3-5s mark
     if (event == BTN_ULTRA_LONG_PRESS) {
+        if (deviceMode == MODE_DISCOVERING) {
+            DEBUG_PRINTLN("Ultra-long press ignored during pairing");
+            return;
+        }
+        SensorState ss = SensorManager::getState();
+        if (ss == SENSOR_INITIALIZING || ss == SENSOR_ALIGNMENT) {
+            DEBUG_PRINTLN("Ultra-long press ignored during sensor initialization");
+            return;
+        }
         DEBUG_PRINTLN("Ultra-long press — powering off");
         setLED(CRGB::Red, 80);
         delay(500);
@@ -969,19 +991,16 @@ void checkBatteryWarnings() {
 }
 
 bool isBatterySafeForRace() {
-    // TEMPORARILY DISABLED FOR TESTING - always return true
+    if (!BatteryManager::isSafeForRace()) {
+        DEBUG_PRINTLN("Battery too low to arm");
+        // Three fast red flashes
+        for (int i = 0; i < 3; i++) {
+            setLED(CRGB::Red, 200); delay(100);
+            setLED(CRGB::Black, 0); delay(100);
+        }
+        return false;
+    }
     return true;
-    
-    // if (!BatteryManager::isSafeForRace()) {
-    //     DEBUG_PRINTLN("Battery too low to arm");
-    //     // Three fast red flashes
-    //     for (int i = 0; i < 3; i++) {
-    //         setLED(CRGB::Red, 200); delay(100);
-    //         setLED(CRGB::Black, 0); delay(100);
-    //     }
-    //     return false;
-    // }
-    // return true;
 }
 
 /*===========================================
@@ -991,13 +1010,16 @@ bool isBatterySafeForRace() {
 void setup() {
     Serial.begin(115200);
     delay(500);
+    
+    // Configure ESP-IDF logging to use Serial/UART
+    esp_log_level_set("*", ESP_LOG_INFO);
 
-    Serial.println("\n=================================");
-    Serial.println("JNS Timer — Stamp S3");
-    //Serial.println("Version: " APP_VERSION);
-    Serial.println("=================================");
-    Serial.println("Serial commands: U=unpair  D=debug  R=restart");
-    Serial.println("=================================\n");
+    ESP_LOGI(TAG, "\n=================================");
+    ESP_LOGI(TAG, "JNS Timer — Stamp S3");
+    //ESP_LOGI(TAG, "Version: " APP_VERSION);
+    ESP_LOGI(TAG, "=================================");
+    ESP_LOGI(TAG, "Serial commands: U=unpair  D=debug  R=restart");
+    ESP_LOGI(TAG, "=================================\n");
 
     // Watchdog
     esp_task_wdt_init(WATCHDOG_TIMEOUT_SEC, true);
@@ -1029,36 +1051,33 @@ void setup() {
     ButtonManager::setUltraLongPressTime(ULTRA_LONG_PRESS_TIME_MS);
     DEBUG_PRINTLN("Button OK");
 
-    // Battery - TEMPORARILY DISABLED FOR TESTING
-    DEBUG_PRINTLN("WARNING: Battery manager disabled for testing!");
-    bool batteryOk = false;  // Skip battery init
-    // bool batteryOk = BatteryManager::init();
-    // DEBUG_PRINTF("Battery: %d%% (%dmV) VIN=%dmV %s\n",
-    //             BatteryManager::getPercentage(),
-    //             BatteryManager::getVoltage(),
-    //             BatteryManager::getInputVoltage(),
-    //             BatteryManager::getChargingString());
+    // Battery
+    bool batteryOk = BatteryManager::init();
+    DEBUG_PRINTF("Battery: %d%% (%dmV) VIN=%dmV %s\n",
+                BatteryManager::getPercentage(),
+                BatteryManager::getVoltage(),
+                BatteryManager::getInputVoltage(),
+                BatteryManager::getChargingString());
     esp_task_wdt_reset();
 
-    // COMMENTED OUT - allowing boot without battery manager
-    // if (!batteryOk) {
-    //     DEBUG_PRINTLN("BATTERY PMIC INIT FAILED — cannot boot");
-    //     for (;;) {
-    //         setLED(CRGB::Yellow, 200); delay(200);
-    //         setLED(CRGB::Black, 0);    delay(800);
-    //         esp_task_wdt_reset();
-    //     }
-    // }
+    if (!batteryOk) {
+        DEBUG_PRINTLN("BATTERY PMIC INIT FAILED — cannot boot");
+        for (;;) {
+            setLED(CRGB::Yellow, 200); delay(200);
+            setLED(CRGB::Black, 0);    delay(800);
+            esp_task_wdt_reset();
+        }
+    }
 
-    // // Check battery before continuing
-    // if (BatteryManager::isCritical()) {
-    //     DEBUG_PRINTLN("CRITICAL BATTERY — cannot boot");
-    //     for (;;) {
-    //         setLED(CRGB::Red, 200); delay(200);
-    //         setLED(CRGB::Black, 0); delay(800);
-    //         esp_task_wdt_reset();
-    //     }
-    // }
+    // Check battery before continuing
+    if (BatteryManager::isCritical()) {
+        DEBUG_PRINTLN("CRITICAL BATTERY — cannot boot");
+        for (;;) {
+            setLED(CRGB::Red, 200); delay(200);
+            setLED(CRGB::Black, 0); delay(800);
+            esp_task_wdt_reset();
+        }
+    }
 
     // Preferences / pairing
     if (loadStoredPreferences()) {
@@ -1091,25 +1110,25 @@ void loop() {
     if (Serial.available()) {
         char cmd = Serial.read();
         if (cmd == 'u' || cmd == 'U') {
-            Serial.println("Force unpair");
+            ESP_LOGI(TAG, "Force unpair");
             clearPreferences();
             delay(500);
             ESP.restart();
         } else if (cmd == 'd' || cmd == 'D') {
-            Serial.println("=== DEBUG ===");
-            Serial.printf("Mode:         %d\n",  deviceMode);
-            Serial.printf("Sensor:       %s\n",  SensorManager::getStateString());
-            Serial.printf("Beam:         %s\n",  SensorManager::isBeamIntact() ? "INTACT" : "BROKEN");
-            Serial.printf("LED state:    %d\n",  currentLedState);
-            Serial.printf("Battery:      %dmV  VIN=%dmV  %s\n",
+            ESP_LOGI(TAG, "=== DEBUG ===");
+            ESP_LOGI(TAG, "Mode:         %d",  deviceMode);
+            ESP_LOGI(TAG, "Sensor:       %s",  SensorManager::getStateString());
+            ESP_LOGI(TAG, "Beam:         %s",  SensorManager::isBeamIntact() ? "INTACT" : "BROKEN");
+            ESP_LOGI(TAG, "LED state:    %d",  currentLedState);
+            ESP_LOGI(TAG, "Battery:      %dmV  VIN=%dmV  %s",
                 PowerManager::batteryMillivolts(),
                 PowerManager::inputMillivolts(),
                 PowerManager::onExternalPower() ? "EXT-PWR" : "BATTERY");
-            Serial.printf("Session runs: %d\n",  sessionRuns);
-            Serial.printf("Last break:   %luus\n", SensorManager::getLastBreakDurationUs());
-            Serial.println("=============\n");
+            ESP_LOGI(TAG, "Session runs: %d",  sessionRuns);
+            ESP_LOGI(TAG, "Last break:   %luus", SensorManager::getLastBreakDurationUs());
+            ESP_LOGI(TAG, "=============");
         } else if (cmd == 'r' || cmd == 'R') {
-            Serial.println("Restart");
+            ESP_LOGI(TAG, "Restart");
             delay(500);
             ESP.restart();
         }
@@ -1121,15 +1140,14 @@ void loop() {
     updatePowerOffSequence();
     updatePairingProgress();
 
-    // TEMPORARILY DISABLED FOR TESTING
-    // if (BatteryManager::update()) {
-    //     DEBUG_PRINTF("Battery: %d%% (%dmV) VIN=%dmV %s\n",
-    //                 BatteryManager::getPercentage(),
-    //                 BatteryManager::getVoltage(),
-    //                 BatteryManager::getInputVoltage(),
-    //                 BatteryManager::getChargingString());
-    // }
-    // checkBatteryWarnings();
+    if (BatteryManager::update()) {
+        DEBUG_PRINTF("Battery: %d%% (%dmV) VIN=%dmV %s\n",
+                    BatteryManager::getPercentage(),
+                    BatteryManager::getVoltage(),
+                    BatteryManager::getInputVoltage(),
+                    BatteryManager::getChargingString());
+    }
+    checkBatteryWarnings();
 
     switch (deviceMode) {
 
